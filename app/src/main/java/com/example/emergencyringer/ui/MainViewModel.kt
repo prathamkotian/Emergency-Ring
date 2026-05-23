@@ -24,16 +24,23 @@ data class MainUiState(
     val priorityContacts: List<PriorityContact> = emptyList(),
     val totalOverrides: Int = 0,
     val isServiceRunning: Boolean = true,
-    val hasDndAccess: Boolean = false,
     val hasPhonePermission: Boolean = false,
     val hasContactsPermission: Boolean = false
 )
+
+sealed class UiEvent {
+    data class DuplicateContact(val contactName: String, val phoneNumber: String) : UiEvent()
+}
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val app = application as EmergencyRingerApp
     private val dao = app.database.priorityContactDao()
     private val callEventDao = app.database.callEventDao()
+
+    // Event flow for UI notifications (one-time events like dialogs)
+    private val _uiEvent = MutableSharedFlow<UiEvent>()
+    val uiEvent = _uiEvent.asSharedFlow()
 
     val uiState: StateFlow<MainUiState> = combine(
         dao.getAllContacts(),
@@ -126,6 +133,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         
         viewModelScope.launch {
             try {
+                // Check if contact already exists
+                val existingContact = dao.findByNumber(normalizedPhone)
+                
+                if (existingContact != null) {
+                    Log.w(TAG, "Duplicate contact found: ${existingContact.displayName}")
+                    // Emit event for UI to show duplicate dialog
+                    _uiEvent.emit(UiEvent.DuplicateContact(
+                        contactName = existingContact.displayName,
+                        phoneNumber = normalizedPhone
+                    ))
+                    return@launch
+                }
+                
                 val contact = PriorityContact(
                     displayName = deviceContact.displayName,
                     phoneNumber = normalizedPhone,

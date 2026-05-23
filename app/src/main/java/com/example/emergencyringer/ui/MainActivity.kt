@@ -40,10 +40,16 @@ private const val TAG = "EmergencyRinger_MainActivity"
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
+    
+    // Shared state to trigger permission updates
+    private val permissionsRefreshState = mutableStateOf(0)
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { /* re-check state after user responds */ }
+    ) { 
+        Log.d(TAG, "Permissions result received - refreshing UI")
+        permissionsRefreshState.value++
+    }
 
     private val contactPickerLauncher = registerForActivityResult(
         ActivityResultContracts.PickContact()
@@ -63,25 +69,70 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             EmergencyRingerTheme {
-                val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-                val audioManager = remember { AudioOverrideManager(this) }
+                // Observe permission refresh state
+                val refreshCount by permissionsRefreshState
 
-                val hasAllPermissions = checkPermissions()
-                val hasDnd = audioManager.isDndAccessGranted()
+                // Reactive permission state that updates when permissions change
+                var hasAllPermissions by remember { mutableStateOf(false) }
+                
+                // State for duplicate contact dialog
+                var showDuplicateDialog by remember { mutableStateOf(false) }
+                var duplicateContactName by remember { mutableStateOf("") }
+                var duplicatePhoneNumber by remember { mutableStateOf("") }
+
+                // Re-check permissions whenever permissions are granted or user returns from settings
+                LaunchedEffect(refreshCount) {
+                    hasAllPermissions = checkPermissions()
+                    Log.d(TAG, "Permission state refreshed - hasAll: $hasAllPermissions")
+                }
+                
+                // Observe UI events from ViewModel
+                LaunchedEffect(Unit) {
+                    viewModel.uiEvent.collect { event ->
+                        when (event) {
+                            is UiEvent.DuplicateContact -> {
+                                duplicateContactName = event.contactName
+                                duplicatePhoneNumber = event.phoneNumber
+                                showDuplicateDialog = true
+                                Log.d(TAG, "Duplicate contact detected: ${event.contactName}")
+                            }
+                        }
+                    }
+                }
+
+                val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
                 EmergencyRingerScreen(
                     uiState = uiState.copy(
-                        hasDndAccess = hasDnd,
                         hasPhonePermission = hasAllPermissions,
                         hasContactsPermission = hasAllPermissions
                     ),
                     onAddContact = { showContactPicker() },
                     onRemoveContact = { viewModel.removeContact(it.id) },
-                    onOpenDndSettings = { openDndSettings() },
                     onOpenBatterySettings = { openBatterySettings() }
                 )
+                
+                // Duplicate Contact Dialog
+                if (showDuplicateDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showDuplicateDialog = false },
+                        title = { Text("Contact Already Exists") },
+                        text = { Text("\"$duplicateContactName\" ($duplicatePhoneNumber) is already in your priority contacts.") },
+                        confirmButton = {
+                            TextButton(onClick = { showDuplicateDialog = false }) {
+                                Text("OK")
+                            }
+                        }
+                    )
+                }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        Log.d(TAG, "Activity resumed - refreshing permission state")
+        permissionsRefreshState.value++
     }
 
     private fun requestRequiredPermissions() {
@@ -170,10 +221,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun openDndSettings() {
-        startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
-    }
-
     private fun openBatterySettings() {
         val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
             data = Uri.parse("package:$packageName")
@@ -193,10 +240,9 @@ fun EmergencyRingerScreen(
     uiState: MainUiState,
     onAddContact: () -> Unit,
     onRemoveContact: (PriorityContact) -> Unit,
-    onOpenDndSettings: () -> Unit,
     onOpenBatterySettings: () -> Unit
 ) {
-    val allGood = uiState.hasDndAccess && uiState.hasPhonePermission
+    val allGood = uiState.hasPhonePermission
 
     Scaffold(
         floatingActionButton = {
@@ -225,19 +271,6 @@ fun EmergencyRingerScreen(
             }
 
             // Permission warnings
-            if (!uiState.hasDndAccess) {
-                item {
-                    WarningCard(
-                        icon = Icons.Default.NotificationsOff,
-                        title = "DND Access Required",
-                        subtitle = "Without this, silent mode cannot be overridden",
-                        actionLabel = "Grant Access",
-                        onAction = onOpenDndSettings,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-
             if (!uiState.hasPhonePermission) {
                 item {
                     WarningCard(
