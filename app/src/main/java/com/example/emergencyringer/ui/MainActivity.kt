@@ -778,7 +778,7 @@ fun HeroStatusCard(isActive: Boolean, totalOverrides: Int, contactCount: Int) {
                 HeroStat("Status", if (isActive) "On" else "Off", statusColor)
             }
             Spacer(Modifier.height(16.dp))
-            Text("Trusted contacts ring at full volume even on silent or Do Not Disturb.", color = Glass.TextSecondary, fontSize = 13.sp, lineHeight = 18.sp)
+            Text("Trusted contacts ring at full volume even on silent or Vibrate Mode.", color = Glass.TextSecondary, fontSize = 13.sp, lineHeight = 18.sp)
         }
     }
 }
